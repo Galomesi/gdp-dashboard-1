@@ -1,151 +1,111 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import plotly.express as px
+import re
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Set Streamlit page config
+st.set_page_config(page_title="Startups Dashboard", page_icon="🌵", layout="wide")
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+st.title("📊 Startups Dashboard")
+st.write("Welcome to the dashboard displaying data on startups!")
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# Load the datasets
+founders_data = pd.read_csv("Cleaned_Founders_Data.csv")
+startup_data = pd.read_csv("Cleaned_Startup_Data.csv")
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# Function to clean 'Cohort' column
+def clean_cohort(value):
+    if pd.isna(value) or value in ["Cactus Academy", "Checks"]:  
+        return None  # Remove invalid values
+    if value == "Current":
+        return 12  # Convert 'Current' to cohort 12
+    match = re.search(r'\d+', str(value))  # Extract only numbers
+    return int(match.group()) if match else None  # Convert to integer
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# Apply cleaning
+founders_data["Cohort"] = founders_data["Cohort"].apply(clean_cohort)
+founders_data["Cohort"] = pd.to_numeric(founders_data["Cohort"], errors="coerce")
+founders_data = founders_data.dropna(subset=["Cohort"])
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# Convert to calendar years
+start_year = 2019
+founders_data["Year"] = start_year + ((founders_data["Cohort"] - 1) // 2).astype(int)
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
+# 🔍 **Filters in Sidebar**
+st.sidebar.header("🔎 Filters")
+
+# **Filter by Faculty**
+if "Faculty" in founders_data.columns:
+    faculty_list = ["All"] + list(founders_data["Faculty"].dropna().unique())
+    selected_faculty = st.sidebar.selectbox("Select Faculty", faculty_list)
+    
+    if selected_faculty != "All":
+        founders_data = founders_data[founders_data["Faculty"] == selected_faculty]
+
+# **Filter by Startup Name**
+if "Startup Name" in startup_data.columns:
+    startup_list = ["All"] + list(startup_data["Startup Name"].dropna().unique())
+    selected_startup = st.sidebar.selectbox("Select Startup", startup_list)
+    
+    if selected_startup != "All":
+        startup_data = startup_data[startup_data["Startup Name"] == selected_startup]
+
+# **Filter by Startup Type (Industry)**
+if "Industry" in startup_data.columns:
+    industry_list = ["All"] + list(startup_data["Industry"].dropna().unique())
+    selected_industry = st.sidebar.selectbox("Select Startup Type (Industry)", industry_list)
+    
+    if selected_industry != "All":
+        startup_data = startup_data[startup_data["Industry"] == selected_industry]
+
+# Creating two columns for side-by-side visualization
+col1, col2 = st.columns(2)
+
+# 📊 **Graph 1: Yearly Trend of Startups**
+with col1:
+    st.subheader("📈 Startups by Year")
+    
+    # Slider to select year range
+    min_year, max_year = int(founders_data["Year"].min()), int(founders_data["Year"].max())
+    selected_years = st.slider("Select Year Range", min_year, max_year, (min_year, max_year))
+
+    # Filter data based on selected years
+    filtered_data = founders_data[(founders_data["Year"] >= selected_years[0]) & (founders_data["Year"] <= selected_years[1])]
+
+    # Count startups per year
+    yearly_counts = filtered_data["Year"].value_counts().reset_index()
+    yearly_counts.columns = ["Year", "Startup Count"]
+    yearly_counts = yearly_counts.sort_values("Year")
+
+    # Create an interactive bar chart with Plotly
+    fig1 = px.bar(
+        yearly_counts, 
+        x="Year", 
+        y="Startup Count", 
+        title="📈 Trends in Number of Startups Over the Years", 
+        labels={"Year": "Year", "Startup Count": "Number of Startups"}, 
+        text_auto=True
     )
+    
+    st.plotly_chart(fig1)
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+# 📈 **Graph 2: Cohort (Semester) Distribution**
+with col2:
+    st.subheader("📊 Startups by Cohort (Semester)")
 
-    return gdp_df
+    # Count startups per cohort (th)
+    cohort_counts = founders_data["Cohort"].value_counts().reset_index()
+    cohort_counts.columns = ["Cohort", "Startup Count"]
+    cohort_counts = cohort_counts.sort_values("Cohort")
 
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+    # Create an interactive bar chart with Plotly
+    fig2 = px.bar(
+        cohort_counts, 
+        x="Cohort", 
+        y="Startup Count", 
+        title="📊 Distribution of Startups by Cohort (th)", 
+        labels={"Cohort": "Cohort (Semester)", "Startup Count": "Number of Startups"}, 
+        text_auto=True
+    )
+    
+    st.plotly_chart(fig2)
